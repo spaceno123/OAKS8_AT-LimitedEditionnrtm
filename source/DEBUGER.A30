@@ -1,0 +1,767 @@
+;	Program DEBUGER.A30 for R8C/Tiny
+;	Date	2003/12/30 .. 2004/1/3
+;	Copyright (c) 2003,2004 by AKIYA.
+;	All rights reserved.
+
+;--- up date ---
+; 2004/2/26  0.02 add debug mode
+; 2004/5/4   0.03 add program load mode, dbg_send_all
+;
+
+	.include	sfr_r811.inc
+	.include	dbgdef.inc
+
+SYSCLK	.equ	20000000	; system clock
+DBGBPS	.equ	38400		; brg=SYSCLK/(DBGBPS*16)-1
+DBGSIO	.equ	0		; 0:ch0, 1:ch1(do not select when use KD30)
+
+	.if DBGSIO == 0
+;-------------------------------------------------------
+;   Interrupt control registers
+;-------------------------------------------------------
+dbg_tic		.equ	s0tic		; UART0 transmit interrupt control register
+dbg_ilvl0_tic	.btequ	ilvl0_s0tic	; Interrupt priority level select bit
+dbg_ilvl1_tic	.btequ	ilvl1_s0tic	;
+dbg_ilvl2_tic	.btequ	ilvl2_s0tic	;
+dbg_ir_tic	.btequ	ir_s0tic	; Interrupt request bit
+;
+dbg_ric		.equ	s0ric		; UART0 receive interrupt control register
+dbg_ilvl0_ric	.btequ	ilvl0_s0ric	; Interrupt priority level select bit
+dbg_ilvl1_ric	.btequ	ilvl1_s0ric	;
+dbg_ilvl2_ric	.btequ	ilvl2_s0ric	;
+dbg_ir_ric	.btequ	ir_s0ric	; Interrupt request bit
+;
+;-------------------------------------------------------
+;   UART0
+;-------------------------------------------------------
+dbg_mr		.equ	u0mr		; UART0 transmit/receive mode register
+dbg_smd0_mr	.btequ	smd0_u0mr	; Serial I/O mode select bit
+dbg_smd1_mr	.btequ	smd1_u0mr	;
+dbg_smd2_mr	.btequ	smd2_u0mr	;
+dbg_ckdir_mr	.btequ	ckdir_u0mr	; Internal/external clock select bit
+dbg_stps_mr	.btequ	stps_u0mr	; Stop bit length select bit
+dbg_pry_mr	.btequ	pry_u0mr	; Odd/even parity select bit
+dbg_prye_mr	.btequ	prye_u0mr	; Parity enable bit
+;
+dbg_brg		.equ	u0brg		; UART0 bit rate generator
+					; Use "MOV" instruction when writing to this register.
+;
+dbg_tb		.equ	u0tb		; UART0 transmit buffer register
+					; Use "MOV" instruction when writing to this register.
+dbg_tbl		.equ	u0tbl		;       Low
+dbg_tbh		.equ	u0tbh		;       High
+;
+dbg_c0		.equ	u0c0		; UART0 transmit/receive control register0
+dbg_clk0_c0	.btequ	clk0_u0c0	; BRG count source select bit
+dbg_clk1_c0	.btequ	clk1_u0c0	;
+dbg_txept_c0	.btequ	txept_u0c0	; Transmit register empty flag
+dbg_nch_c0	.btequ	nch_u0c0	; Data output select bit
+dbg_ckpol_c0	.btequ	ckpol_u0c0	; CLK polarity select bit
+dbg_uform_c0	.btequ	uform_u0c0	; Transfer format select bit
+;
+dbg_c1		.equ	u0c1		; UART0 transmit/receive control register1
+dbg_te_c1	.btequ	te_u0c1		; Transmit enable bit
+dbg_ti_c1	.btequ	ti_u0c1		; Transmit buffer empty flag
+dbg_re_c1	.btequ	re_u0c1		; Receive enable bit
+dbg_ri_c1	.btequ	ri_u0c1		; Receive complete flag
+;
+dbg_rb		.equ	u0rb		; UART0 receive buffer register
+dbg_rbl		.equ	u0rbl		;       Low
+dbg_rbh		.equ	u0rbh		;       High
+dbg_oer_rb	.btequ	oer_u0rb	; Overrun error flag
+dbg_fer_rb	.btequ	fer_u0rb	; Framing error flag
+dbg_per_rb	.btequ	per_u0rb	; Parity error flag
+dbg_sum_rb	.btequ	sum_u0rb	; Error sum flag
+
+;dbg_ucon	.equ	ucon		; UART transmit/receive control register2
+dbg_irs		.btequ	u0irs		; UART0 transmit interrupt cause select bit
+;dbg_irs	.btequ	u1irs		; UART1 transmit interrupt cause select bit
+dbg_rrm		.btequ	u0rrm		; UART0 continuous receive mode enable bit
+;dbg_txdsel	.btequ	txd1sel		; Port P00/TxD11 select bit
+;dbg_rxden	.btequ	rxd1en		; TxD10/RxD1 select bit
+	.endif
+
+	;//////////////////
+	;/// debug work ///
+	;//////////////////
+
+BUF_SIZ	.equ	16
+ACT_OFS	.equ	0
+WRP_OFS	.equ	1
+RDP_OFS	.equ	2
+DAT_OFS	.equ	3
+
+	.section	DBG_DATA,DATA
+
+usr_stp:	.blkw	1
+dbg_stp:	.blkw	1
+dbg_flag:	.blkb	1	; defined dbgdef.inc
+ungetc_buf:	.blkb	1
+t_buf:		.blkb	DAT_OFS+BUF_SIZ	;act,wrp,rdp,dat[BUF_SIZ]
+r_buf:		.blkb	DAT_OFS+BUF_SIZ	;act,wrp,rdp,dat[BUF_SIZ]
+dbg_stk:	.blkb	48
+dbg_stk_top:
+
+	;////////////////////////
+	;/// debug initialize ///
+	;////////////////////////
+
+	.section	DBG_CODE,CODE
+
+	.glb	DBG_INIT
+DBG_INIT:
+	pushc	flg
+	fclr	i
+
+	mov.b:z	#0,r0l				; buffer clear
+	mov.w	#topof DBG_DATA,a1
+	mov.w	#sizeof DBG_DATA,r3
+	sstr.b
+	mov.w	#dbg_ent,r0			; debug entry set
+	mov.w	r0,dbg_stk_top-2
+	mov.w	#dbg_stk_top-2,dbg_stp
+
+	mov.b	#00000101b,dbg_mr		; parity none, stop 1bit, internal clock, 8bit data
+	mov.b	#00001000b,dbg_c0		; lsb farst, rise clock, txd cmos, clock 1/1
+	bclr	dbg_irs				; txd interrupt buffer empty
+	bclr	dbg_rrm				; continuous receive disable
+	mov.b	#(SYSCLK/(DBGBPS*16))-1,dbg_brg	; 20MHz/(31.25kHz*16div)-1
+	mov.w	dbg_rb,r0			; dummy read
+	mov.b	#00000111b,dbg_c1		; rx enable, tx enable
+
+	mov.b	#7,dbg_tic			; priority 7
+	mov.b	#7,dbg_ric			; priority 7
+
+	popc	flg
+	rts
+
+	;/////////////////////
+	;/// sci interrupt ///
+	;/////////////////////
+
+	.section	DBG_CODE,CODE
+
+	.glb	DBG_RXD_INT
+DBG_RXD_INT:
+	pushm	r0,a0
+	stc	isp,usr_stp
+	ldc	dbg_stp,isp
+
+	bclr	dbg_ir_ric
+	mov.w	dbg_rb,r0
+	btst	15,r0
+	jne	dbg_rxd_err
+
+	fclr	c
+	rts	;go(c=0:rxd)
+
+dbg_rxd_err:
+	bclr	dbg_re_c1
+	nop
+	bset	dbg_re_c1
+
+dbg_nxt_byt:
+	btst	dbgmod_f
+	jnz	dbg_mod_nxt
+	stc	isp,dbg_stp
+	ldc	usr_stp,isp
+	popm	r0,a0
+	reit
+
+	.glb	DBG_TXD_INT
+DBG_TXD_INT:
+	pushm	r0,a0
+	stc	isp,usr_stp
+	ldc	dbg_stp,isp
+
+	bclr	dbg_ir_tic
+	mov.w	#t_buf,a0
+	jsr	get_buf
+	jc	dbg_txd_int_0
+	mov.b	r0l,dbg_tbl
+
+dbg_txd_int_0:
+	fset	c
+	rts	;go(c=1:txd)
+
+dbg_mod_nxt:
+	btst	dbg_ri_c1
+	jnz	dbg_mod_nxt_1
+	btst	dbg_ti_c1
+	jz	dbg_mod_nxt
+	bclr	dbg_ir_tic
+	mov.w	#t_buf,a0
+	jsr	get_buf
+	jc	dbg_mod_nxt_0
+	mov.b	r0l,dbg_tbl
+dbg_mod_nxt_0:
+	fset	c
+	rts	;go(c=1:txd)
+dbg_mod_nxt_1:
+	bclr	dbg_ir_ric
+	mov.w	dbg_rb,r0
+	fclr	c
+	rts	;go(c=0:rxd)
+
+	;//////////////////////////
+	;/// transmit & receive ///
+	;//////////////////////////
+
+	.section	DBG_CODE,CODE
+
+;- put buffer -
+; entry	 r0l=data
+;	 a0=buffer structur top address
+; return flg:c=0:ok,1:buffer full
+; break	 flg,r0h
+put_buf:
+	cmp.b	#BUF_SIZ,ACT_OFS[a0]
+	jgeu	put_buf_z
+
+	mov.b	WRP_OFS[a0],r0h
+	add.b	r0h,a0
+	mov.b	r0l,DAT_OFS[a0]
+	sub.b	r0h,a0
+	inc.b	r0h
+	cmp.b	#BUF_SIZ,r0h
+	jltu	put_buf_0
+	mov.b:z	#0,r0h
+put_buf_0:
+	mov.b	r0h,WRP_OFS:8[a0]
+
+	add.b	#1,ACT_OFS:8[a0]
+
+	fclr	c
+put_buf_z:
+	rts
+
+;- get buffer -
+; entry	 a0=buffer structur top address
+; return flg:c=0(data=r0l),1:buffer empty
+; break	 flg,r0
+get_buf:
+	cmp.b	#0,ACT_OFS[a0]
+	jeq	get_buf_z		;c=1
+
+	mov.b	RDP_OFS[a0],r0h
+	add.b	r0h,a0
+	mov.b	DAT_OFS[a0],r0l
+	sub.b	r0h,a0
+	inc.b	r0h
+	cmp.b	#BUF_SIZ,r0h
+	jltu	get_buf_0
+	mov.b:z	#0,r0h
+get_buf_0:
+	mov.b	r0h,RDP_OFS:8[a0]
+
+	sub.b	#1,ACT_OFS:8[a0]
+
+	fclr	c
+get_buf_z:
+	rts
+
+;- check buffer -
+; entry	 a0=buffer structur top address
+; return flg:c=0(data in),=1(buffer empty)
+; break	 flg
+chk_buf:
+	cmp.b	#0,ACT_OFS:8[a0]
+	jeq	chk_buf_0		; c=1
+	fclr	c
+chk_buf_0:
+	rts
+
+;- debug check rxd buffer -
+; entry	 none.
+; return flg:c=0(data in),=1(buffer empty)
+; break	 flg
+	.glb	dbg_chk_rxd_buf
+dbg_chk_rxd_buf:
+	push.w	a0
+	mov.w	#r_buf,a0
+	jsr		chk_buf
+	pop.w	a0
+	rts
+
+	;//////////////////////
+	;/// input & output ///
+	;//////////////////////
+	; note	 must be flg:i=0
+
+	.section	DBG_CODE,CODE
+
+;- debug get charactor -
+; entry	 none.
+; return r0l=data
+; break	 all
+dbg_getc:
+	btstc	ungetc_f
+	jc	dbg_getc_2
+	mov.w	#r_buf,a0
+	jsr	get_buf
+	jnc	dbg_getc_1
+dbg_getc_0:
+	jsr	dbg_nxt_byt
+	jc	dbg_getc_0
+dbg_getc_1:
+	rts
+dbg_getc_2:
+	mov.b	ungetc_buf,r0l
+	rts
+
+;- unget character (push back) -
+; entry	 r0l=push back character (0..255)
+; return none.
+; break	 none.
+dbg_ungetc:
+	mov.b	r0l,ungetc_buf
+	bset	ungetc_f
+	rts
+
+;- debug get charactor with echo -
+; entry	 none.
+; return r0l=data
+; break	 all
+dbg_getche:
+	btstc	ungetc_f
+	jc	dbg_getche_1
+	jsr	dbg_getc
+	push.b	r0l
+	jsr	dbg_putc
+	mov.b	0[sp],r0l
+	cmp.b	#0dh,r0l
+	jne	dbg_getche_0
+	mov.b	#0ah,r0l
+	jsr	dbg_putc
+dbg_getche_0:
+	pop.b	r0l
+	rts
+dbg_getche_1:
+	mov.b	ungetc_buf,r0l
+	rts
+
+;- debug put charactor -
+; entry	 r0l=data
+; return none.
+; break	 all
+	.glb	dbg_putc
+dbg_putc:
+	push.w	a0
+	mov.w	#t_buf,a0
+	jsr	put_buf
+	pop.w	a0
+	jnc	dbg_putc_2
+
+dbg_putc_0:
+	push.b	r0l
+	jsr	dbg_nxt_byt
+	jc	dbg_putc_1
+	push.w	a0
+	mov.w	#r_buf,a0
+	jsr	put_buf
+	pop.w	a0
+	pop.b	r0l
+	jmp	dbg_putc_0
+
+dbg_putc_1:
+	pop.b	r0l
+	jmp	dbg_putc
+
+dbg_putc_2:
+	btst	dbg_ti_c1		; 0:full,1:empty
+	jeq	dbg_putc_3
+
+	push.w	a0
+	mov.w	#t_buf,a0
+	jsr	get_buf
+	pop.w	a0
+	jc	dbg_putc_3
+	bclr	dbg_ir_tic
+	mov.b	r0l,dbg_tbl
+
+dbg_putc_3:
+	rts
+
+;- debuger put strings -
+; entry	 a0=strings top address
+; return none.
+; break	 all
+	.glb	dbg_puts
+dbg_puts:
+	mov.b	[a0],r0l
+	cmp.b	#0,r0l
+	jeq	dbg_puts_0
+	push.w	a0
+	jsr	dbg_putc
+	pop.w	a0
+	add.w	#1,a0
+	jmp	dbg_puts
+dbg_puts_0:
+	rts
+
+;- debug send all -
+; entry	 none.
+; return none.
+; break	 all
+	.glb	dbg_send_all
+dbg_send_all:
+	push.w	r0
+	push.w	a0
+	pushc	flg
+	fclr	i
+	mov.w	#t_buf,a0
+dbg_send_all_0:
+	jsr	get_buf
+	jc	dbg_send_all_2
+dbg_send_all_1:
+	btst	dbg_ti_c1		; 0:full,1:empty
+	jeq	dbg_send_all_1
+	bclr	dbg_ir_tic
+	mov.b	r0l,dbg_tbl
+	jmp.w	dbg_send_all_0
+dbg_send_all_2:
+	btst	dbg_txept_c0		; 0:active,1:empty
+	jeq	dbg_send_all_2
+	popc	flg
+	pop.w	a0
+	pop.w	r0
+	rts
+
+;- debug get hex echo n -
+; entry	 r0h=digit
+; return c=0:ok(a0=data,r0l=last character),1:error(a0=data,r0h=last of digit,r0l=error character)
+; break	 r0,a0
+dbg_gethen:
+	xor.w	a0,a0
+dbg_gethen_0:
+	cmp.b	#1,r0h
+	jltu	dbg_gethen_2	;c=1
+	push.b	r0h
+	push.w	a0
+	jsr	dbg_getche
+	pop.w	a0
+	mov.b	r0l,r0h
+	jsr	dbg_hex_to_bin
+	jnc	dbg_gethen_1
+	mov.b	r0h,r0l
+	pop.b	r0h
+	jmp	dbg_gethen_2
+dbg_gethen_1:
+	pop.b	r0h
+	shl.w	#4,a0
+	add.b	r0l,a0
+	dec.b	r0h
+	jmp	dbg_gethen_0
+dbg_gethen_2:
+	rts
+
+;- debug hex character to binary -
+; entry	 r0l=character data
+; return c=0:ok(r0=data),1:error
+; break	 r0l
+dbg_hex_to_bin:
+	cmp.b	#"0",r0l
+	jltu	dbg_hex_to_bin_0
+	cmp.b	#"9",r0l
+	jleu	dbg_hex_to_bin_3
+	cmp.b	#"A",r0l
+	jltu	dbg_hex_to_bin_0
+	cmp.b	#"F",r0l
+	jleu	dbg_hex_to_bin_2
+	cmp.b	#"a",r0l
+	jltu	dbg_hex_to_bin_0
+	cmp.b	#"f",r0l
+	jleu	dbg_hex_to_bin_1
+dbg_hex_to_bin_0:
+	fset	c
+	rts
+dbg_hex_to_bin_1:
+	sub.b	#"a"-"A",r0l
+dbg_hex_to_bin_2:
+	sub.b	#"A"-"0"-10,r0l
+dbg_hex_to_bin_3:
+	sub.b	#"0",r0l
+	fclr	c
+	rts
+
+;- debug put hex 1byte -
+; entry	 r0l=data
+; return none.
+; break	 all
+dbg_puth1:
+	and.b	#0fh,r0l
+	cmp.b	#10,r0l
+	jltu	dbg_puth1_0
+	add.b	#"A"-"0"-10,r0l
+dbg_puth1_0:
+	add.b	#"0",r0l
+	jmp	dbg_putc
+
+;- debug put hex n -
+; entry	 a0=data
+;		 r0h=digit
+; return none.
+; break	 all
+	.glb	dbg_puthn
+dbg_puthn:
+	mov.b	r0h,r0l
+	jeq	dbg_puthn_2
+dbg_puthn_0:
+	dec.b	r0l
+	jeq	dbg_puthn_1
+	rot.w	#-4,a0
+	jmp	dbg_puthn_0
+dbg_puthn_1:
+	push.b	r0h
+	push.w	a0
+	mov.b	a0,r0l
+	jsr	dbg_puth1
+	pop.w	a0
+	pop.b	r0h
+	rot.w	#4,a0
+	dec.b	r0h
+	jne	dbg_puthn_1
+dbg_puthn_2:
+	rts
+
+;- debug scan format -
+; entry	 a0=format string top address
+;		 format (%x:1..4hex,%nx:n=1..4fixed hex,%%:%,\r:CR=H'0d,\\:\)
+; return c=0:ok(@sp=1st,@sp+2=2nd,...),1:ng
+; break	 r0,a0
+	.glb	dbg_scanf
+dbg_scanf:
+	stc	sp,r0
+	add.w	#3,r0	; r0=save address
+	push.w	r0
+dbg_scanf_0:
+	mov.b	[a0],r0h
+	jeq	dbg_scanf_3
+	inc.w	a0
+	cmp.b	#"%",r0h
+	jeq	dbg_scanf_per
+	cmp.b	#"\\",r0h
+	jeq	dbg_scanf_yen
+dbg_scanf_1:
+	push.w	a0
+	push.b	r0h
+	jsr	dbg_getche
+	pop.b	r0h
+	pop.w	a0
+	cmp.b	r0h,r0l
+	jeq	dbg_scanf_0
+dbg_scanf_2:	;ng
+	pop.w	r0
+	fset	c
+	rts
+dbg_scanf_3:	;ok
+	pop.w	r0
+	fclr	c
+	rts
+dbg_scanf_per:
+	mov.b	[a0],r0h
+	jeq	dbg_scanf_2
+	inc.w	a0
+	cmp.b	#"%",r0h
+	jeq	dbg_scanf_1
+	cmp.b	#"x",r0h
+	jeq	dbg_scanf_per_1
+	cmp.b	#"0",r0h
+	jleu	dbg_scanf_2
+	cmp.b	#"4",r0h
+	jgtu	dbg_scanf_2
+	;* %nx *
+	add.b	#-"0",r0h	;"1".."4" -> 1..4
+	push.w	a0
+	jsr	dbg_gethen
+dbg_scanf_per_0:
+	mov.w	a0,r0
+	pop.w	a0
+	jc	dbg_scanf_2
+	push.w	a0
+	mov.w	2[sp],a0
+	mov.w	r0,[a0]
+	add.b	#2,a0
+	mov.w	a0,2[sp]
+	pop.w	a0
+	jmp	dbg_scanf_0
+	;* %x *
+dbg_scanf_per_1:
+	mov.b	#4,r0h
+	push.w	a0
+	jsr	dbg_gethen
+	jnc	dbg_scanf_per_0		; "nnnn"
+	cmp.b	#4,r0h
+	jeq	dbg_scanf_per_2
+	jsr	dbg_ungetc
+	jmp	dbg_scanf_per_0		; "n".."nnn"
+dbg_scanf_per_2:
+	pop.w	a0
+	jmp	dbg_scanf_2
+dbg_scanf_yen:
+	mov.b	[a0],r0h
+	jeq	dbg_scanf_2
+	inc.w	a0
+	cmp.b	#"\\",r0h
+	jeq	dbg_scanf_1
+	cmp.b	#"r",r0h
+	jne	dbg_scanf_2
+	mov.b	#0dh,r0h
+	jmp	dbg_scanf_1
+
+	;///////////////
+	;/// debuger ///
+	;///////////////
+
+	.section	DBG_CODE,CODE
+
+dbg_end:
+	jsr	dbg_nxt_byt
+dbg_ent:
+	jc	dbg_end
+	cmp.b	#"@",r0l
+	jne	dbg_end
+	mov.w	#dbg_ent_msg_crlf,a0
+dbg_msg:
+	jsr	dbg_puts
+dbg_prm:
+	btst	dbgmod_f
+	jz	dbg_prm_0
+	mov.w	#dbg_pm2_msg,a0
+	jsr	dbg_puts
+	mov.w	#dbg_fc2_tbl,a0
+	jmp	dbg_nxt
+dbg_prm_0:
+	mov.w	#dbg_prm_msg,a0
+	jsr	dbg_puts
+	mov.w	#dbg_fnc_tbl,a0
+dbg_nxt:
+	push.w	a0
+	jsr	dbg_getche
+	pop.w	a0
+dbg_dec:
+	mov.b	[a0],r0h
+	cmp.b	r0h,r0l
+	jeq	dbg_fnc
+	neg.b	r0h
+	cmp.b	r0h,r0l
+	jne	dbg_dec_0
+;?	mova	1[a0],a0
+	mov.w	1[a0],a0	;?
+	jmp	dbg_nxt
+dbg_dec_0:
+	add.b	#4,a0
+	mov.b	[a0],r0h
+	jne	dbg_dec	
+dbg_err:
+	mov.w	#dbg_err_msg,a0
+	jmp	dbg_msg
+dbg_fnc:
+	jsri.a	1[a0]
+	jc	dbg_err
+	jmp	dbg_prm
+
+	;////////////
+	;/// exit ///
+	;////////////
+
+dbg_exit:
+	mov.w	#dbg_end,a0
+	mov.w	a0,0[sp]
+	mov.w	#dbg_end_msg,a0
+	jmp	dbg_puts
+
+	;/////////////////////
+	;/// command table ///
+	;/////////////////////
+
+	.section	DBG_TBL,ROMDATA
+
+CMD_TBL	.macro	code, addr
+	.byte	code
+	.addr	addr
+	.endm
+
+LNK_TBL	.macro	code, addr
+	.byte	-code
+	.addr	addr
+	.endm
+
+dbg_fnc_tbl:
+	CMD_TBL	("@"),dbg_exit	;'@'
+	LNK_TBL	("D"),dbg_fnc_D
+	LNK_TBL	("?"),dbg_fnc_Q
+	.byte	0
+
+	.glb	dbg_dmp_mem, dbg_dmp_siz
+dbg_fnc_D:
+	LNK_TBL	("I"),dbg_fnc_DI
+	CMD_TBL	("M"),dbg_dmp_mem
+	CMD_TBL	("S"),dbg_dmp_siz
+	.byte	0
+
+	.glb	dbg_hlp
+dbg_fnc_Q:
+	CMD_TBL	(0dh),dbg_hlp
+	.byte	0
+
+	.glb	dbg_mod_sta
+dbg_fnc_DI:
+	CMD_TBL	(0dh),dbg_mod_sta
+	.byte	0
+
+dbg_fc2_tbl:
+	LNK_TBL	("D"),dbg_fc2_D
+ .if IPLON == 1
+	LNK_TBL	("P"),dbg_fc2_P
+ .endif
+	LNK_TBL	("?"),dbg_fc2_Q
+	.byte	0
+
+dbg_fc2_D:
+	LNK_TBL	("O"),dbg_fc2_DO
+	CMD_TBL	("M"),dbg_dmp_mem
+	CMD_TBL	("S"),dbg_dmp_siz
+	.byte	0
+
+ .if IPLON == 1
+dbg_fc2_P:
+	LNK_TBL	("L"),dbg_fc2_PL
+	.byte	0
+ .endif
+
+	.glb	dbg_hp2
+dbg_fc2_Q:
+	CMD_TBL	(0dh),dbg_hp2
+	.byte	0
+
+	.glb	dbg_mod_stp
+dbg_fc2_DO:
+	CMD_TBL	(0dh),dbg_mod_stp
+	.byte	0
+
+ .if IPLON == 1
+	.glb	dbg_ipl_sta
+dbg_fc2_PL:
+	CMD_TBL	(0dh),dbg_ipl_sta
+	.byte	0
+ .endif
+
+	.section	DBG_MSG,ROMDATA
+
+	.glb	dbg_ent_msg
+dbg_ent_msg_crlf:
+	.byte	0dh,0ah
+dbg_ent_msg:
+	.byte	"*** DEBUGER for R8C/Tiny Ver.0.03 Copyright (c) 2003,2004 by AKIYA ***",0
+dbg_end_msg:
+	.byte	0dh,0ah
+	.byte	"*** Exit ***",0dh,0ah,0
+dbg_prm_msg:
+	.byte	0dh,0ah,"*",0
+dbg_pm2_msg:
+	.byte	0dh,0ah,">",0
+dbg_err_msg:
+	.byte	0dh,0ah,"?",0
+
+	.end

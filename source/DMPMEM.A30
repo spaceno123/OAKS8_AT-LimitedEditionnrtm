@@ -1,0 +1,213 @@
+;	Program	DMPMEM.A30
+;	Date 2004/1/2 .. 2004/1/3
+;	Copyright (c) 2004 by AKIYA.
+;	All rights reserved.
+
+	;///////////////////
+	;/// dump memory ///
+	;///////////////////
+
+	.glb	dbg_putc, dbg_scanf, dbg_puthn, dbg_chk_rxd_buf
+
+	.section	DBG_CODE,CODE
+
+	.glb	dbg_dmp_mem
+dbg_dmp_mem:
+	mov.b	#"-",r0l
+	jsr		dbg_putc
+	add.w	#-(2+2),sp
+	mov.w	#dmp_mem_scn,a0
+	jsr	dbg_scanf
+	pop.w	r0			; r0=start
+	pop.w	a0			; a0=end
+	jc	dbg_dmp_mem_2
+	cmp.w	a0,r0
+	jgtu	dbg_dmp_mem_2
+dbg_dmp_mem_0:
+	jsr	dbg_dmp_mem_hex	;<ent> r0=start, a0=end <ret> c=1:end
+	jsr	dbg_dmp_mem_asc	;<ent> r0=start, a0=end <ret> c=1:end
+	jc	dbg_dmp_mem_1
+	jsr	dbg_chk_rxd_buf
+	jnc	dbg_dmp_mem_1	; exit
+	push.w	r0
+	push.w	a0
+	mov.b	#0dh,r0l
+	jsr	dbg_putc
+	mov.b	#0ah,r0l
+	jsr	dbg_putc
+	pop.w	a0
+	pop.w	r0
+	add.w	#10h,r0
+	and.b	#0f0h,r0l
+	jmp	dbg_dmp_mem_0
+dbg_dmp_mem_1:
+	fclr	c
+dbg_dmp_mem_2:
+	rts
+
+;- debug dump memory hex -
+; entry	 r0=start address
+;	 a0=end address
+; return c=1:end, 0:not end
+; break	 flg
+dbg_dmp_mem_hex:
+	push.w	r0
+	push.w	a0
+	;* address *
+	and.b	#0f0h,r0l
+	mov.w	r0,a0
+	mov.b	#4,r0h
+	jsr	dbg_puthn
+	;* space *
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	;* align *
+	mov.w	2[sp],a0
+	mov.b	a0,r0l
+	and.b	#0fh,r0l
+	jeq	dbg_dmp_mem_hex_1
+	mov.b	r0l,r0h
+	add.b	r0l,r0h
+	add.b	r0l,r0h	;r0h=r0l*3
+	add.b	#1,r0h
+	cmp.b	#8*3+1,r0h
+	jleu	dbg_dmp_mem_hex_0
+	inc.b	r0h
+dbg_dmp_mem_hex_0:
+	push.b	r0h
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	pop.b	r0h
+	dec.b	r0h
+	jne	dbg_dmp_mem_hex_0
+	mov.w	2[sp],a0
+	;* space *
+dbg_dmp_mem_hex_1:
+	mov.b	a0,r0l
+	and.b	#07h,r0l
+	jne	dbg_dmp_mem_hex_2
+	mov.b	#" ",r0l
+	push.w	a0
+	jsr	dbg_putc
+	pop.w	a0
+	;* data *
+dbg_dmp_mem_hex_2:
+	mov.b	[a0],r0l
+	push.w	a0
+	mov.b	r0l,a0
+	mov.b	#2,r0h
+	jsr	dbg_puthn
+	;* space *
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	pop.w	a0
+	mov.w	0[sp],r0
+	cmp.w	a0,r0
+	jeq	dbg_dmp_mem_hex_3
+	inc.w	a0
+	mov.b	a0,r0l
+	and.b	#0fh,r0l
+	jne	dbg_dmp_mem_hex_1
+	pop.w	a0
+	pop.w	r0
+	fclr	c	; continue
+	rts
+	;* align *
+dbg_dmp_mem_hex_3:
+	and.b	#0fh,r0l
+	mov.b	#0fh,r0h
+	sub.b	r0l,r0h
+	jeq	dbg_dmp_mem_hex_5
+	mov.b	r0h,r0l
+	add.b	r0l,r0h
+	add.b	r0l,r0h	;r0h=r0l*3
+	cmp.b	#8*3,r0h
+	jleu	dbg_dmp_mem_hex_4
+	inc.b	r0h
+dbg_dmp_mem_hex_4:
+	push.b	r0h
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	pop.b	r0h
+	dec.b	r0h
+	jne	dbg_dmp_mem_hex_4
+dbg_dmp_mem_hex_5:
+	pop.w	a0
+	pop.w	r0
+	fset	c	; end
+	rts
+
+;- debug dump memory ascii -
+; entry	 r0=start address
+;	 a0=end address
+; return c=1:end, 0:not end
+; break	 flg
+dbg_dmp_mem_asc:
+	push.w	r0
+	push.w	a0
+	;* align with space *
+	mov.w	2[sp],a0
+	mov.b	a0,r0h
+	and.b	#0fh,r0h
+	add.b	#1,r0h
+dbg_dmp_mem_asc_0:
+	push.b	r0h
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	pop.b	r0h
+	dec.b	r0h
+	jne	dbg_dmp_mem_asc_0
+	mov.w	2[sp],a0
+	;* data *
+dbg_dmp_mem_asc_1:
+	mov.b	[a0],r0l
+	push.w	a0
+	cmp.b	#" ",r0l
+	jltu	dbg_dmp_mem_asc_2
+	cmp.b	#80h,r0l
+	jltu	dbg_dmp_mem_asc_3
+	cmp.b	#0a0h,r0l
+	jleu	dbg_dmp_mem_asc_2
+	cmp.b	#0e0h,r0l
+	jltu	dbg_dmp_mem_asc_3
+dbg_dmp_mem_asc_2:
+	mov.b	#".",r0l
+dbg_dmp_mem_asc_3:
+	jsr	dbg_putc
+	pop.w	a0
+	mov.w	0[sp],r0
+	cmp.w	a0,r0
+	jeq	dbg_dmp_mem_asc_4
+	inc.w	a0
+	mov.b	a0,r0l
+	and.b	#0fh,r0l
+	jne	dbg_dmp_mem_asc_1
+	pop.w	a0
+	pop.w	r0
+	fclr	c	; continue
+	rts
+	;* align *
+dbg_dmp_mem_asc_4:
+	and.b	#0fh,r0l
+	mov.b	#0fh,r0h
+	sub.b	r0l,r0h
+	jeq	dbg_dmp_mem_asc_6
+dbg_dmp_mem_asc_5:
+	push.b	r0h
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	pop.b	r0h
+	dec.b	r0h
+	jne	dbg_dmp_mem_asc_5
+dbg_dmp_mem_asc_6:
+	pop.w	a0
+	pop.w	r0
+	fset	c	; end
+	rts
+
+	.section	DBG_MSG,ROMDATA
+
+dmp_mem_scn:
+	.byte	"%x,%x\\r",0
+	
+	.end

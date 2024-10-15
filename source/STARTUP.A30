@@ -1,0 +1,201 @@
+;	Program	STARTUP.A30 for R8C/Tiny
+;	Date	2003/12/29 .. 2004/1/2
+;	Copyright (c) 2003 by AKIYA.
+;	All rights reserved.
+
+	.include	sfr_r811.inc
+	.include	dbgdef.inc
+
+;-------------------------------------------------------;
+;	Numeric symbol definition			;
+;	(see R8C Program Collection No. 30)		;
+;-------------------------------------------------------;
+VramTOP		.EQU		000400H			; Declares start address of RAM
+VramEND		.EQU		0005FFH			; Declares last address of RAM
+VIstack		.EQU		000600H	;5C0~5FF(64byte); Interrupt stack pointer
+;VUstack	.EQU		0005C0H	;580~5BF(64byte); User stack pointer
+;VproTOP	.EQU		00E000H			; Declares start address of program
+ .if IPLON == 1
+VECTOR_ADR	.equ		00fcdch
+FIX_VECTOR	.equ		00fddch
+ .else
+VECTOR_ADR	.EQU		00FEDCh			; Declares start address of variable vector table
+;FIX_VECTOR	.EQU		00FFFCh	;<- 00FFDCh	; Declares fixed interrupt vector address
+FIX_VECTOR	.EQU		00FFDCh			; Declares fixed interrupt vector address
+ .endif
+;														;
+;-------------------------------------------------------;
+;	RAM area allocation				;
+;-------------------------------------------------------;
+	.SECTION	DATA,DATA			; [Section name specification]
+;	.ORG		VramTOP				; [Absolute address setting]
+;							;
+;-------------------------------------------------------;
+;	Program area allocation				;
+;-------------------------------------------------------;
+	.SECTION	PROG,CODE			; Declares CODE attribute section of section name "PROG"
+;	.ORG	VproTOP					; Sets location to F0000H
+	.OPTJ	OFF					; [Branch instruction optimize specification]
+;							; Does not optimize branch instruction after this line
+;	.FB	VramTOP					; [Assumption of FB register value]
+	.FB	topof DATA				; [Assumption of FB register value]
+;							; Assumes 400H for FB register value 
+;	.SB	VramTOP+80H				; [Assumption of SB register value]
+	.SB	topof DATA+80h				; [Assumption of SB register value]
+;							; Assumes 480H for SB register value 
+	.FBSYM	SHORT					;
+	.SBSYM	CHECK					;
+;=======================================================;
+;	Program start					;
+;=======================================================;
+RESET:							;
+	LDC	#VIstack,ISP				; Sets interrupt stack pointer
+;							;
+;	bset	prc1					; Sets processer mode
+;	mov.b	#00h,pm0				;
+;	bclr	prc1					;
+;							;
+	bset	prc0
+	or.b	#00101000b,cm1				; Main clock enable (1/1)
+	and.b	#00111111b,cm1				;
+	and.b	#10011111b,cm0				;
+	mov.b	#(500/10)/5+1,r0l			; 500usec/(1/100kHz)*1000000
+?:							;
+	dec.b	r0l	;1				;
+	jne	?-	;2+2				;
+	bclr	ocd2					;
+	bclr	prc0					;
+	ldc	#topof DATA,fb				; Sets frame base register
+	ldc	#topof DATA+80h,sb			; Sets static base register
+	LDINTB	#VECTOR_ADR				; Sets interrupt table register
+;							;
+	MOV.W	#0,R0					; Sets store data (0)
+	MOV.W	#((VramEND+1)-VramTOP)/2,R3		; Sets number of transfers performed
+;	MOV.W	#((sizeof DATA)+1)/2,R3			; Sets number of transfers performed
+	MOV.W	#VramTOP,A1				; Sets address where to start storing
+;	MOV.W	#topof DATA,A1				; Sets address where to start storing
+	SSTR.W						; Executes clearing of RAM
+;							;
+;	FSET	U					; User stack
+;	LDC	#VUstack,SP				; Sets user stack pointer
+;							;
+	.glb	DBG_INIT
+	jsr	DBG_INIT
+;							;
+	FSET	I					; Enables interrupt
+;=======================================================;
+;	Main program					;
+;=======================================================;
+MAIN:
+	.glb	idle
+	jmp	idle
+;							;
+DMYINT:							;
+	REIT						;
+;							;
+NOTUSE:
+	RTS						; 
+;							;
+	.PAGE	'VECTOR'				;
+;-------------------------------------------------------;
+;	Peripheral I/O interrupt vector table		;
+;-------------------------------------------------------;
+	.glb	DBG_TXD_INT, DBG_RXD_INT
+	.SECTION	UINTER,ROMDATA			; Declares FOMDATA attribute section of section name "UINTER"
+	.org	VECTOR_ADR
+	.lword	DMYINT		; vector 0		; BRK instruction		(vector 0)
+	.lword	DMYINT		; vector 1
+	.lword	DMYINT		; vector 2
+	.lword	DMYINT		; vector 3
+	.lword	DMYINT		; vector 4
+	.lword	DMYINT		; vector 5
+	.lword	DMYINT		; vector 6
+	.lword	DMYINT		; vector 7
+	.lword	DMYINT		; vector 8
+	.lword	DMYINT		; vector 9
+	.lword	DMYINT		; vector 10
+	.lword	DMYINT		; vector 11
+	.lword	DMYINT		; vector 12
+	.lword	DMYINT		; vector 13		; Key input interrupt	(vector 13)
+	.lword	DMYINT		; vector 14		; A-D					(vector 14)
+	.lword	DMYINT		; vector 15
+	.lword	DMYINT		; vector 16
+	.lword	DBG_TXD_INT	; vector 17		; UART0 transmit		(vector 17)
+	.lword	DBG_RXD_INT	; vector 18		; UART0 receive			(vector 18)
+	.lword	DMYINT		; vector 19		; UART1 transmit		(vector 19)
+	.lword	DMYINT		; vector 20		; UART1 receive			(vector 20)
+	.lword	DMYINT		; vector 21		; INT2					(vector 21)
+	.lword	DMYINT		; vector 22		; Timer X				(vector 22)
+	.lword	DMYINT		; vector 23		; Timer Y				(vector 23)
+	.lword	DMYINT		; vector 24		; Timer Z				(vector 24)
+	.lword	DMYINT		; vector 25		; INT1					(vector 25)
+	.lword	DMYINT		; vector 26		; INT3					(vector 26)
+	.lword	DMYINT		; vector 27		; Timer C				(vector 27)
+	.lword	DMYINT		; vector 28
+	.lword	DMYINT		; vector 29		; INT0					(vector 29)
+	.lword	DMYINT		; vector 30
+	.lword	DMYINT		; vector 31
+	.lword	DMYINT		; vector 32
+	.lword	DMYINT		; vector 33
+	.lword	DMYINT		; vector 34
+	.lword	DMYINT		; vector 35
+	.lword	DMYINT		; vector 36
+	.lword	DMYINT		; vector 37
+	.lword	DMYINT		; vector 38
+	.lword	DMYINT		; vector 39
+	.lword	DMYINT		; vector 40
+	.lword	DMYINT		; vector 41
+	.lword	DMYINT		; vector 42
+	.lword	DMYINT		; vector 43
+	.lword	DMYINT		; vector 44
+	.lword	DMYINT		; vector 45
+	.lword	DMYINT		; vector 46
+	.lword	DMYINT 		; vector 47
+	.lword	DMYINT 		; vector 48
+	.lword	DMYINT 		; vector 49
+	.lword	DMYINT 		; vector 50
+	.lword	DMYINT 		; vector 51
+	.lword	DMYINT 		; vector 52
+	.lword	DMYINT 		; vector 53
+	.lword	DMYINT 		; vector 54
+	.lword	DMYINT 		; vector 55
+	.lword	DMYINT 		; vector 56
+	.lword	DMYINT 		; vector 57
+	.lword	DMYINT 		; vector 58
+	.lword	DMYINT 		; vector 59
+	.lword	DMYINT 		; vector 60
+	.lword	DMYINT 		; vector 61
+	.lword	DMYINT 		; vector 62
+	.lword	DMYINT 		; vector 63
+;							;
+;-------------------------------------------------------;
+;	Fixed interrupt vector table			;
+;-------------------------------------------------------;
+	.SECTION	INTER,ROMDATA		; Declares FOMDATA attribute section of section name "INTER"
+	.ORG	FIX_VECTOR			; Sets location to FFFDCH
+ .if IPLON == 1
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	NOTUSE
+	jmp.a	RESET
+ .else
+	.LWORD	NOTUSE				; FFFDC to F 	Undefined instruction
+	.LWORD	NOTUSE				; FFFE0 to 3	Overflow
+	.LWORD	NOTUSE				; FFFE4 to 7 	BRK instruction
+	.LWORD	NOTUSE				; FFFE8 to B 	Address coincidence
+	.LWORD	NOTUSE				; FFFEC to F 	Single stepping
+	.LWORD	NOTUSE				; FFFF0 to 3 	Watchdog timer
+	.LWORD	NOTUSE				; FFFF4 to 7	Debugger
+	.LWORD	NOTUSE				; FFFF8 to B 	NMI
+	.LWORD	RESET				; FFFFC to F 	Reset
+ .endif
+;							;
+;-------------------------------------------------------;
+;	End of assemble direction			;
+;-------------------------------------------------------;
+	.END						; 

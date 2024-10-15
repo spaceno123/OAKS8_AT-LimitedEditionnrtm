@@ -1,0 +1,81 @@
+;	Program	DBGMOD.A30
+;	Date 2004/2/25 .. 2004/2/25
+;	Copyright (c) 2004 by AKIYA.
+;	All rights reserved.
+
+;--- up date ---
+; 2004/05/04 add program load mode
+;
+
+	.include	dbgdef.inc
+
+	.glb	dbg_puts, dbg_send_all
+
+	;//////////////////////////
+	;/// debugger mode stop ///
+	;//////////////////////////
+
+	.section	DBG_CODE,CODE
+
+	.glb	dbg_mod_stp
+dbg_mod_stp:
+	mov.w	#dbg_stp_msg,a0
+	jsr	dbg_puts
+	bclr	dbgmod_f
+	fclr	c
+	rts
+
+	;///////////////////////////
+	;/// debugger mode start ///
+	;///////////////////////////
+
+	.section	DBG_CODE,CODE
+
+	.glb	dbg_mod_sta
+dbg_mod_sta:
+	bset	dbgmod_f
+	mov.w	#dbg_sta_msg,a0
+	jsr	dbg_puts
+	fclr	c
+	rts
+
+ .if IPLON == 1
+	;///////////////////////////////
+	;/// program load mode start ///
+	;///////////////////////////////
+
+	.section	DBG_CODE,CODE
+
+	.glb	dbg_ipl_sta
+dbg_ipl_sta:
+	fclr	i
+	fclr	u
+	cmp.w	#0fe12h,0fffch
+	jeq	dbg_ipl_sta_0
+	mov.w	#dbg_ipl_err,a0
+	jsr	dbg_puts
+	fclr	c
+	rts
+dbg_ipl_sta_0:
+	mov.w	#dbg_ipl_inf,a0
+	jsr	dbg_puts
+	jsr	dbg_send_all
+	mov.w	0fe10h,a0
+	mov.b	#0,a1
+	jmpi.a	a1a0
+ .endif
+
+	.section	DBG_MSG,ROMDATA
+
+dbg_sta_msg:
+	.byte	"=== debugging mode in ===",0
+dbg_stp_msg:
+	.byte	"=== debugging mode out ===",0
+ .if IPLON == 1
+dbg_ipl_err:
+	.byte	" IPL not found !",0
+dbg_ipl_inf:
+	.byte	" W[CR]:flash erase and ipl write, Z[CR]:flash erase all",0
+ .endif
+
+	.end

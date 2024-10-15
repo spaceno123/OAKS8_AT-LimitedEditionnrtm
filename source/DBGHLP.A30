@@ -1,0 +1,117 @@
+;	Program	DBGHLP.A30
+;	Date	2004/1/2 .. 2004/1/2
+;	Copyright (c) 2004 by AKIYA.
+;	All rights reserved.
+;
+;--- up date ---
+; 2004/01/03 add dmp_mem_hlp, dmp_siz_hlp
+; 2004/02/26 add dbg_min_hlp, dbg_out_hlp, dbg_hp2
+; 2004/05/04 add dbg_ipl_hlp
+
+	.include	dbgdef.inc
+
+	;////////////////////
+	;/// help message ///
+	;////////////////////
+
+	.glb	dbg_ent_msg, dbg_puts, dbg_putc
+
+	.section	DBG_CODE,CODE
+
+	.glb	dbg_hp2
+dbg_hp2:
+	mov.b	#">",r0l
+	mov.w	#dbg_hp2_mon,a0
+	jmp	_dbg_hlp
+
+	.glb	dbg_hlp
+dbg_hlp:
+	mov.b	#"*",r0l
+	mov.w	#dbg_hlp_mon,a0
+_dbg_hlp:
+	push.b	r0l
+	push.w	a0
+	mov.w	#dbg_ent_msg,a0
+	jsr	dbg_puts
+	mov.w	#hlp_msg_def,a0
+	jsr	dbg_puts
+dbg_hlp_0:
+	;* left *
+	mov.w	0[sp],a0
+	mov.w	[a0],r0
+	jeq	dbg_hlp_1
+	mov.b	#0dh,r0l
+	jsr	dbg_putc
+	mov.b	#0ah,r0l
+	jsr	dbg_putc
+	mov.b	#" ",r0l
+	jsr	dbg_putc
+	mov.b	2[sp],r0l
+	jsr	dbg_putc
+	pop.w	a0
+	mov.w	[a0],r0
+	add.w	#2,a0
+	push.w	a0
+	mov.w	r0,a0
+	jsr	dbg_puts
+	;* right *
+	mov.w	0[sp],a0
+	mov.w	[a0],r0
+	jeq	dbg_hlp_1
+	mov.b	2[sp],r0l
+	jsr	dbg_putc
+	pop.w	a0
+	mov.w	[a0],r0
+	add.w	#2,a0
+	push.w	a0
+	mov.w	r0,a0
+	jsr	dbg_puts
+	jmp	dbg_hlp_0
+dbg_hlp_1:
+	pop.w	a0
+	pop.b	r0l
+	fclr	c
+	rts
+
+	.section	DBG_MSG,ROMDATA
+
+dbg_hlp_mon:
+	.word	exi_cmd_hlp
+	.word	dbg_min_hlp
+	.word	dmp_mem_hlp
+	.word	dmp_siz_hlp
+	.word	hlp_msg_hlp
+	.word	0
+
+dbg_hp2_mon:
+	.word	dbg_out_hlp
+	.word	dmp_mem_hlp
+	.word	dmp_siz_hlp
+ .if IPLON == 1
+	.word	dbg_ipl_hlp
+ .endif
+	.word	hlp_msg_hlp
+	.word	0
+
+hlp_msg_def:;123456789012345678901234567890123456789
+	.byte	0dh,0ah
+	.byte	" SS=start, EE=end, LL=length, WW=wide,"
+	.byte	" NN=line, II=initial, RR=reg., BB=addr.",0
+exi_cmd_hlp:
+	.byte	"@               exit monitor          ",0
+dbg_min_hlp:
+	.byte	"DI[CR]          debug mode in         ",0
+dbg_out_hlp:
+	.byte	"DO[CR]          debug mode out        ",0
+dmp_mem_hlp:
+	.byte	"DM-SS,EE[CR]    dump memory           ",0
+dmp_siz_hlp:
+	.byte	"DS-SS,LL,WW[CR] dump memory size      ",0
+ .if IPLON == 1
+dbg_ipl_hlp:
+	.byte	"PL[CR]          program load mode in  ",0
+ .endif
+hlp_msg_hlp:
+	.byte	"?[CR]           this help message     ",0
+
+	.end

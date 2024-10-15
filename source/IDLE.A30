@@ -1,0 +1,34 @@
+;	Program	IDLE.A30
+;	Date	2004/1/1 .. 2004/1/2
+;	Copyright (c) 2004 by AKIYA.
+;	All rights reserved.
+
+	.include	sfr_r811.inc
+
+IDLED_p		.btequ	p4_5	;p1_3
+IDLED_pd	.btequ	pd4_5	;pd1_3
+
+	.section	DATA,DATA
+	.blkb		1
+
+	.section	CODE,CODE
+
+	.glb	idle
+idle:
+	bset	IDLED_p
+	bset	IDLED_pd
+
+idle_loop:
+	mov.w	#(20000000/2/5)&0ffffh,a0
+	mov.b	#(20000000/2/5)>>16,r0l
+?:
+	dec.w	a0
+	jnz	?-
+	dec.b	r0l
+	jnz	?-
+
+	bnot	IDLED_p
+	nop
+	jmp	idle_loop
+
+	.end
